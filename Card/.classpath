@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="con" path="JCDK2.2.2"/>
+	<classpathentry kind="lib" path="C:/Users/steve.harkins/Documents/EclipseJCDE/GlobalPlatform Card API - org.globalplatform - 1.5"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>

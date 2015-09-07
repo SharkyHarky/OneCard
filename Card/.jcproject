@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE properties SYSTEM "http://java.sun.com/dtd/properties.dtd">
+<properties>
+<comment>Java Card project properties</comment>
+<entry key="com.radiius.card">0x52:0x41:0x44:0x00:0x00:0x01</entry>
+<entry key="com.radiius.card.CardApplet">0x52:0x41:0x44:0x00:0x00:0x00:0x00:0x11</entry>
+</properties>
