@@ -65,7 +65,7 @@ public class CardApplet extends Applet {
     private final static short TAG_SLEEVE_HASH            = (short)0x0001;
     private final static short TAG_CARD_HASH              = (short)0x0002;
     private final static short TAG_AES_MKEY               = (short)0x0004;
-    private final static short TAG_VERSION                = (short)0x1042;
+    private final static short TAG_VERSION                = (short)0x4000;
 
     private final static short ALL_FIELDS_PERSOED         = (short)0x0007;
 
@@ -176,7 +176,8 @@ public class CardApplet extends Applet {
         byte[] apduBuffer = apdu.getBuffer();
         
         // Pull out the class and instruction bytes.
-        short cla_ins = (short)(Util.getShort(apduBuffer, ISO7816.OFFSET_CLA) & (short)0xFCFF);
+        short cla_ins = (short)(Util.getShort(apduBuffer, ISO7816.OFFSET_CLA) & (short)0xF0FF);
+        short cla     = (byte)(apduBuffer[ISO7816.OFFSET_CLA] & 0xF0);
 
         if (cla_ins == CLA_INS_SELECT)
         {
@@ -188,7 +189,7 @@ public class CardApplet extends Applet {
         }
 
         // Check the class byte - for Radiius it should always be 0x80.
-        if (CLA_PROPRIETARY != (byte)(apduBuffer[ISO7816.OFFSET_CLA] & (byte)0xFC))
+        if (CLA_PROPRIETARY != cla)
             ISOException.throwIt(ISO7816.SW_CLA_NOT_SUPPORTED);
 
         // Determines the length of the response.
@@ -246,14 +247,15 @@ public class CardApplet extends Applet {
         byte[] apduBuffer = apdu.getBuffer();
 
         // Extract the tag of the data item to be personalised - mask off the last put bit.
-        short tag    = (short) (Util.getShort(apduBuffer, ISO7816.OFFSET_P1) & 0x7FFF);
+        short tag    = (short) (Util.getShort(apduBuffer, ISO7816.OFFSET_P1) & 0x0FFF);
+        byte  p1     = (byte)(apduBuffer[ISO7816.OFFSET_P1] & 0x80);
 
         // Remove the security from the APDU exposing the validates plaintext payload.
         short length = mySecureChannel.unwrap(apduBuffer, (short)0, (short)(apdu.setIncomingAndReceive() + 5));
 
         // Only allow when in INSTAALLED state - not allowed after perso complete.
-        if (GPSystem.getCardContentState() == GPSystem.APPLICATION_SELECTABLE)
-            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        if (GPSystem.getCardContentState() != GPSystem.APPLICATION_SELECTABLE)
+            ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
 
         switch (tag)
         {
@@ -281,11 +283,12 @@ public class CardApplet extends Applet {
         persoFlags |= tag ;
         
         // If this is the last put data of personalisation, verify that all fields have been personalised.
-        if ((((byte)(apduBuffer[ISO7816.OFFSET_P1] & 0x80) != 0)) &&  ((persoFlags & ALL_FIELDS_PERSOED) != ALL_FIELDS_PERSOED)) 
-        	ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
-
-        GPSystem.setCardContentState(APPLET_PERSONALIZED);
-
+        if (p1 != 0) {
+    		if (persoFlags != ALL_FIELDS_PERSOED) 
+    			ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+        	
+            GPSystem.setCardContentState(APPLET_PERSONALIZED);
+        }
 	}
 
 	private short getData(APDU apdu) {
@@ -295,10 +298,13 @@ public class CardApplet extends Applet {
         short tag    = (short) (Util.getShort(apduBuffer, ISO7816.OFFSET_P1) & 0x7FFF);
 
         // Only allow when in INSTAALLED state - not allowed after perso complete.
-        if ((tag != TAG_VERSION) && (GPSystem.getCardContentState() == APPLET_PERSONALIZED))
-            ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
+        if (tag != TAG_VERSION) {
+        	
+        	if (GPSystem.getCardContentState() != APPLET_PERSONALIZED)
+        		ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
+        }
 
-    	short dataToSend = Util.setShort(apduBuffer, (short)0, tag) ;
+    	short dataToSend = Util.setShort(apduBuffer, ISO7816.OFFSET_CDATA, tag) ;
         switch (tag)
         {
 	        case TAG_VERSION:

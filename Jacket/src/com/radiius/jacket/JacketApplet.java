@@ -83,7 +83,7 @@ public class JacketApplet extends Applet {
     private final static short TAG_RSA_PRIME_P            = (short)0x0100;
     private final static short TAG_RSA_PUB_EXP            = (short)0x0200;
     private final static short TAG_RSA_PUB_MOD            = (short)0x0400;
-    private final static short TAG_VERSION                = (short)0x1042;
+    private final static short TAG_VERSION                = (short)0x4000;
 
     private final static short ALL_FIELDS_PERSOED         = (short)0x01FF;
 
@@ -215,7 +215,8 @@ public class JacketApplet extends Applet {
         byte[] apduBuffer = apdu.getBuffer();
         
         // Pull out the class and instruction bytes.
-        short cla_ins = (short)(Util.getShort(apduBuffer, ISO7816.OFFSET_CLA) & (short)0xFCFF);
+        short cla_ins = (short)(Util.getShort(apduBuffer, ISO7816.OFFSET_CLA) & (short)0xF0FF);
+        short cla     = (byte)(apduBuffer[ISO7816.OFFSET_CLA] & 0xF0);
 
         if (cla_ins == CLA_INS_SELECT)
         {
@@ -227,7 +228,7 @@ public class JacketApplet extends Applet {
         }
 
         // Check the class byte - for Radiius it should always be 0x80.
-        if (CLA_PROPRIETARY != (byte)(apduBuffer[ISO7816.OFFSET_CLA] & (byte)0xFC))
+        if (CLA_PROPRIETARY != cla)
             ISOException.throwIt(ISO7816.SW_CLA_NOT_SUPPORTED);
 
         // Determines the length of the response.
@@ -310,12 +311,13 @@ public class JacketApplet extends Applet {
 
         // Extract the tag of the data item to be personalised - mask off the last put bit.
         short tag    = (short) (Util.getShort(apduBuffer, ISO7816.OFFSET_P1) & 0x7FFF);
+        byte  p1     = (byte)(apduBuffer[ISO7816.OFFSET_P1] & 0x80);
 
         // Remove the security from the APDU exposing the validates plaintext payload.
         short length = mySecureChannel.unwrap(apduBuffer, (short)0, (short)(apdu.setIncomingAndReceive() + 5));
 
         // Only allow when in INSTAALLED state - not allowed after perso complete.
-        if (GPSystem.getCardContentState() == GPSystem.APPLICATION_SELECTABLE)
+        if (GPSystem.getCardContentState() != GPSystem.APPLICATION_SELECTABLE)
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
 
         switch (tag)
@@ -378,14 +380,15 @@ public class JacketApplet extends Applet {
         persoFlags |= tag ;
         
         // If this is the last put data of personalisation, verify that all fields have been personalised.
-        if ((((byte)(apduBuffer[ISO7816.OFFSET_P1] & 0x80) != 0)) &&  ((persoFlags & ALL_FIELDS_PERSOED) != ALL_FIELDS_PERSOED)) 
-        	ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+        if (p1 != 0) {
+    		if ((persoFlags & ALL_FIELDS_PERSOED) != ALL_FIELDS_PERSOED) 
+    			ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+        	
+            // Initialise the RSA cipher.
+            rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
 
-        // Initialise the RSA cipher.
-        rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
-
-        GPSystem.setCardContentState(APPLET_PERSONALIZED);
-
+            GPSystem.setCardContentState(APPLET_PERSONALIZED);
+        }
 	}
 
 	private void unblockPin(APDU apdu) {
@@ -411,8 +414,12 @@ public class JacketApplet extends Applet {
         short tag    = (short) (Util.getShort(apduBuffer, ISO7816.OFFSET_P1) & 0x7FFF);
 
         // Only allow when in INSTAALLED state - not allowed after perso complete.
-        if ((tag != TAG_VERSION) && (GPSystem.getCardContentState() == APPLET_PERSONALIZED))
-            ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
+        // Only allow when in INSTAALLED state - not allowed after perso complete.
+        if (tag != TAG_VERSION) {
+        	
+        	if (GPSystem.getCardContentState() != APPLET_PERSONALIZED)
+        		ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
+        }
 
     	short dataToSend = Util.setShort(apduBuffer, (short)0, tag) ;
         switch (tag)
