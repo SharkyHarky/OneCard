@@ -1,0 +1,82 @@
+	Validate_Step_2: Good Validate Step 2 		PASS
+
+[cardreader.pcsc] Sending APDU:
+	00 A4 04 00 08 A0 00 00  01 51 00 00 00
+[cardreader.pcsc] Response:
+	6F 64 84 08 A0 00 00 01  51 00 00 00 A5 58 9F 65 
+	01 FF 9F 6E 06 47 91 20  81 3B 00 73 49 06 07 2A 
+	86 48 86 FC 6B 01 60 0B  06 09 2A 86 48 86 FC 6B 
+	02 02 02 63 09 06 07 2A  86 48 86 FC 6B 03 64 0B 
+	06 09 2A 86 48 86 FC 6B  04 02 55 65 0B 06 09 2B 
+	85 10 86 48 64 02 01 03  66 0C 06 0A 2B 06 01 04 
+	01 2A 02 6E 01 02 90 00
+[cardreader.pcsc] Sending APDU:
+	80 50 00 00 08 DE AD 16  6B B4 46 AB 29
+[cardreader.pcsc] Response:
+	00 00 23 34 00 96 88 96  46 62 FF 02 01 44 3D A7 
+	51 C7 68 15 8F FF 55 DA  1A 56 C3 D1 90 00
+[cardreader.pcsc] Sending APDU:
+	84 82 01 00 10 C4 D6 0B  42 48 46 D4 02 02 CB 07 
+	FD DD C8 3D 4D
+[cardreader.pcsc] Response:
+	90 00
+[cardreader.pcsc] Sending APDU:
+	84 E4 00 00 12 4F 08 52  41 44 00 00 01 00 11 D6 
+	AE 38 67 10 F7 9D 64
+[cardreader.pcsc] Response:
+	00 90 00
+[cardreader.pcsc] Sending APDU:
+	84 E6 0C 00 27 06 52 41  44 00 00 01 08 52 41 44 
+	00 00 01 00 11 08 52 41  44 00 00 01 00 11 01 00 
+	02 C9 00 00 A4 9C F8 FE  6D 0E CC E4
+[cardreader.pcsc] Response:
+	00 90 00
+[cardreader.pcsc] Sending APDU:
+	00 A4 04 00 08 52 41 44  00 00 01 00 11
+[cardreader.pcsc] Response:
+	90 00
+[cardreader.pcsc] Sending APDU:
+	80 50 00 00 08 F2 5C B2  69 FA 88 57 85
+[cardreader.pcsc] Response:
+	00 00 23 34 00 96 88 96  46 62 FF 02 01 45 2D 74 
+	FD E1 86 48 CD AF 1D 7A  88 F6 39 46 90 00
+[cardreader.pcsc] Sending APDU:
+	84 82 01 00 10 AE 36 FA  46 EA 6A 20 D1 13 73 A8 
+	7A 5A 39 AA F9
+[cardreader.pcsc] Response:
+	90 00
+[cardreader.pcsc] Sending APDU:
+	84 DA 00 01 28 01 02 03  04 05 06 07 08 09 00 01 
+	02 03 04 05 06 07 08 09  00 01 02 03 04 05 06 07 
+	08 09 00 01 02 F7 FE 24  20 FC 1F 14 29
+[cardreader.pcsc] Response:
+	90 00
+[cardreader.pcsc] Sending APDU:
+	84 DA 00 02 28 01 02 03  04 05 06 07 08 09 00 01 
+	02 03 04 05 06 07 08 09  00 01 02 03 04 05 06 07 
+	08 09 00 03 04 25 F8 47  B2 A2 39 F8 E9
+[cardreader.pcsc] Response:
+	90 00
+[cardreader.pcsc] Sending APDU:
+	84 DA 80 04 28 01 02 03  04 05 06 07 08 09 00 01 
+	02 03 04 05 06 07 08 09  00 01 02 03 04 05 06 07 
+	08 09 00 05 06 1A C4 D2  53 B6 3B 1C 08
+[cardreader.pcsc] Response:
+	90 00
+[cardreader.pcsc] Sending APDU:
+	00 A4 04 00 08 52 41 44  00 00 01 00 11
+[cardreader.pcsc] Response:
+	90 00
+[cardreader.pcsc] Sending APDU:
+	80 C0 01 01 42 00 2A FD  AA 8B C5 4F 44 F9 67 9D 
+	81 3C D4 B8 7F EE 2F C8  2E 61 37 95 BF 04 69 54 
+	3C 14 4B B5 93 52 40 5C  7C 0F CD 66 58 F3 46 1D 
+	EB 86 A7 1C 32 09 97 29  51 00 D4 82 EE 69 7D 64 
+	73 0B 23 83 CE 33 A9
+[cardreader.pcsc] Response:
+	FD AA 8B C5 4F 44 F9 67  9D 81 3C D4 B8 7F EE 2F 
+	C8 2E 61 37 95 BF 04 69  54 3C 14 4B B5 93 52 40 
+	5C 7C 0F CD 66 58 F3 46  1D EB 86 A7 1C 32 09 97 
+	29 51 00 D4 82 EE 69 7D  64 73 0B 23 83 CE 33 A9 
+	90 00
+PASS
