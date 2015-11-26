@@ -1,16 +1,20 @@
 /**
- * 
+ *
  */
 package com.radiius.jacket;
 
 import javacard.framework.APDU;
 import javacard.framework.Applet;
+import javacard.framework.AppletEvent;
+import javacard.framework.CardRuntimeException;
 import javacard.framework.ISO7816;
 import javacard.framework.ISOException;
 import javacard.framework.JCSystem;
 import javacard.framework.OwnerPIN;
+import javacard.framework.SystemException;
 import javacard.framework.Util;
 import javacard.security.AESKey;
+import javacard.security.CryptoException;
 import javacard.security.KeyBuilder;
 import javacard.security.RSAPrivateCrtKey;
 import javacardx.crypto.Cipher;
@@ -22,12 +26,12 @@ import org.globalplatform.SecureChannel;
  * @author steve.harkins
  *
  */
-public class JacketApplet extends Applet {
+public class JacketApplet extends Applet  implements AppletEvent {
 
-	/*
-	 * Applet version string.
-	 */
-    private final static byte []  VERSION                 = {'R','a','d','i','i','u','s',' ','S','l','e','e','v','e',' ','A','p','p','l','e','t',' ','0','.','1'};
+    /*
+     * Applet version string.
+     */
+    private final static byte []  VERSION                 = {'R','a','d','i','i','u','s',' ','J','a','c','k','e','t',' ','A','p','p','l','e','t',' ','0','.','1'};
 
     /*
      * Applet states.
@@ -35,18 +39,18 @@ public class JacketApplet extends Applet {
     private final static byte  APPLET_PERSONALIZED        = (byte)0x0F;
 
     /*
-	 * The class for proprietary APDUs.
-	 */
+     * The class for proprietary APDUs.
+     */
     private final static byte  CLA_PROPRIETARY            = (byte)0x80;
-    
-	/*
-	 * The GP defined select APDU.
-	 */
+
+    /*
+     * The GP defined select APDU.
+     */
     private final static short CLA_INS_SELECT             = (short)0x00A4;
-    
-	/*
-	 * Constants to define the GP defines APDUs to establiish a secure channel for the scripts.
-	 */
+
+    /*
+     * Constants to define the GP defines APDUs to establiish a secure channel for the scripts.
+     */
     private final static short CLA_INS_INITIALISE_UPDATE  = (short)0x8050;
     private final static short CLA_INS_EXTERNAL_AUTH      = (short)0x8082;
 
@@ -102,9 +106,11 @@ public class JacketApplet extends Applet {
     private static RSAPrivateCrtKey sleeveRSAPrivateCrtKey;
     private static Cipher           rsaCipher;
 
+    private final static short      RSA_KEY_LENGTH        = (short)248 ;
+
     private static byte[]    tmpBuffer ;
 
-    // These personalisation items will be allocated by the PUT DATA. 
+    // These personalisation items will be allocated by the PUT DATA.
     private static short     persoFlags = 0 ;
     private static byte[]    sleeveHash ;
     private static byte[]    cardHash ;
@@ -113,82 +119,100 @@ public class JacketApplet extends Applet {
     private static byte[]    pubKeyMod ;
 
     private static OwnerPIN  sleevePin ;
-    
+
     // Secure Channel Support
     private SecureChannel mySecureChannel;
 
     private static byte[]    handsetFingerprint ;
-    
+
     CardStore cardStore = null ;
 
-	/**
-	 * This is the main constructor for the applet, it:
-	 * <p>
-	 * <ul>
-	 * <li> Initialises any variables.
-	 * <li> Allocates space to store the card data and initialises it.
-	 * <li> Allocates any transient memory require by the applet.
-	 * <li> Registers with the framework.
-	 * </ul>
-	 * 
-	 * @param buffer the installation buffer.
-	 * @param offset an offset into the buffer for the applet specific install parameters
-	 * @param length length of the applet specific install parameters
-	 */
-	private JacketApplet(byte[] buffer, short offset, byte length) {
-		
-		persoFlags    = 0 ;
+    /**
+     * This is the main constructor for the applet, it:
+     * <p>
+     * <ul>
+     * <li> Initialises any variables.
+     * <li> Allocates space to store the card data and initialises it.
+     * <li> Allocates any transient memory require by the applet.
+     * <li> Registers with the framework.
+     * </ul>
+     *
+     * @param buffer the installation buffer.
+     * @param offset an offset into the buffer for the applet specific install parameters
+     * @param length length of the applet specific install parameters
+     */
+    private JacketApplet(byte[] buffer, short offset, byte length) {
 
-		cardStore = new CardStore() ;
-		
-        // *** All transient memory should be allocated within this block ****
-        if (transientStatus == null)
-        {
-        	// Define storage for the transient states (pairing status with handset and card)
-            transientStatus = JCSystem.makeTransientBooleanArray(NUM_TRANSIENT_STATES, JCSystem.CLEAR_ON_RESET);
+        persoFlags    = 0 ;
 
-        	// Initialise a key to be used when validating the card.
-            validationAesKey   = (AESKey)KeyBuilder.buildKey(KeyBuilder.TYPE_AES_TRANSIENT_RESET, KeyBuilder.LENGTH_AES_256, false);
+        cardStore              = new CardStore() ;
 
-            validationCipher   = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
+        // Define storage for the transient states (pairing status with handset and card)
+        transientStatus        = JCSystem.makeTransientBooleanArray(NUM_TRANSIENT_STATES, JCSystem.CLEAR_ON_RESET);
 
-            // Initialise a key to be used when pairing with the handset.
-            sleeveRSAPrivateCrtKey = (RSAPrivateCrtKey)KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_CRT_PRIVATE, KeyBuilder.LENGTH_RSA_1984, false);
+        validationAesKey       = (AESKey)KeyBuilder.buildKey(KeyBuilder.TYPE_AES_TRANSIENT_RESET, KeyBuilder.LENGTH_AES_256, false);
+        validationCipher       = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_CBC_NOPAD, false);
 
-        	// Allocate temporary buffer that will be cleared on reset. 
-            tmpBuffer = JCSystem.makeTransientByteArray((short)256, JCSystem.CLEAR_ON_RESET);
-            
-            sleevePin = new OwnerPIN((byte)3, MAX_PIN_LENGTH);
-        }
+        // Allocate temporary buffer that will be cleared on reset.
+        tmpBuffer              = JCSystem.makeTransientByteArray((short)256, JCSystem.CLEAR_ON_RESET);
+
+        // Initialise a key to be used when pairing with the handset.
+        sleeveRSAPrivateCrtKey = (RSAPrivateCrtKey)KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_CRT_PRIVATE, KeyBuilder.LENGTH_RSA_1984, false);
+
+        sleevePin              = new OwnerPIN((byte)3, MAX_PIN_LENGTH);
+
+        // Initialise the RSA cipher.
+        rsaCipher              = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
 
         // Register with the environment.
         this.register(buffer, (short)(offset + 1), buffer[offset]);
-	}
+    }
 
-	/**
-	 * The install method is invoked when the Global Platform framework receives the INSTALL 
-	 * for INSTALL APDU.
-	 * <p>
-	 * This allows the applet to be initialised and registered with the platform.
-	 *  
-	 * @param bArray the installation buffer.
-	 * @param bOffset an offset into the buffer for the applet specific install parameters
-	 * @param bLength length of the applet specific install parameters
-	 * 
-	 * @throws ISOException
-	 */
-	public static void install(byte bArray[], short bOffset, byte bLength)
-			throws ISOException {
+    /**
+     * The install method is invoked when the Global Platform framework receives the INSTALL
+     * for INSTALL APDU.
+     * <p>
+     * This allows the applet to be initialised and registered with the platform.
+     *
+     * @param bArray the installation buffer.
+     * @param bOffset an offset into the buffer for the applet specific install parameters
+     * @param bLength length of the applet specific install parameters
+     *
+     * @throws ISOException
+     */
+    public static void install(byte bArray[], short bOffset, byte bLength)
+            throws ISOException {
         new JacketApplet(bArray, bOffset, bLength);
-	}
+    }
+
+    /**
+     * Uninstall any bits and pieces.
+     */
+    public void uninstall() {
+        if (validationAesKey != null)
+            validationAesKey.clearKey() ;
+
+        if (sleeveRSAPrivateCrtKey != null)
+            sleeveRSAPrivateCrtKey.clearKey() ;
+
+        if (cardStore != null)
+            cardStore.deleteAll() ;
+
+        tmpBuffer = null ;
+        sleevePin = null ;
+        cardStore = null ;
+        sleeveRSAPrivateCrtKey = null ;
+        validationAesKey = null ;
+        validationCipher = null ;
+    }
 
     /* (non-Javadoc)
      * @see javacard.framework.Applet#select()
      */
-	// Invoked by the framework when the applet is selected.
+    // Invoked by the framework when the applet is selected.
     public boolean select()
     {
-    	// Get a reference to the secure channel should the applet need it.
+        // Get a reference to the secure channel should the applet need it.
         mySecureChannel = GPSystem.getSecureChannel();
 
         return super.select();
@@ -197,23 +221,22 @@ public class JacketApplet extends Applet {
     /* (non-Javadoc)
      * @see javacard.framework.Applet#deselect()
      */
-	// Invoked by the framework when the applet is selected.
+    // Invoked by the framework when the applet is selected.
     public void deselect()
     {
-    	// Reset the secure channel.
+        // Reset the secure channel.
         mySecureChannel.resetSecurity();
     }
 
 
+    /* (non-Javadoc)
+     * @see javacard.framework.Applet#process(javacard.framework.APDU)
+     */
+    public void process(APDU apdu) throws ISOException {
 
-	/* (non-Javadoc)
-	 * @see javacard.framework.Applet#process(javacard.framework.APDU)
-	 */
-	public void process(APDU apdu) throws ISOException {
-		
-		// Extract the APDU buffer.
+        // Extract the APDU buffer.
         byte[] apduBuffer = apdu.getBuffer();
-        
+
         // Pull out the class and instruction bytes.
         short cla_ins = (short)(Util.getShort(apduBuffer, ISO7816.OFFSET_CLA) & (short)0xF0FF);
         short cla     = (byte)(apduBuffer[ISO7816.OFFSET_CLA] & 0xF0);
@@ -223,7 +246,7 @@ public class JacketApplet extends Applet {
             // Check that the select command is actually selecting this applet.
             if (!selectingApplet())
                 ISOException.throwIt(ISO7816.SW_FILE_NOT_FOUND);
-            
+
             return ;
         }
 
@@ -237,76 +260,76 @@ public class JacketApplet extends Applet {
         // For each valid instruction call the appropriate method.
         switch (cla_ins)
         {
-        
-        // The global platform commands will be handled by the associated security domain.
-        case	CLA_INS_INITIALISE_UPDATE:
-        case	CLA_INS_EXTERNAL_AUTH:
-        	dataToSend = mySecureChannel.processSecurity(apdu);
-        	break ;
 
-        /*
-         * The PUT DATA and UNBLOCK PIN must be sent in a secured script from either
-         * the perso tool or an OTA script.
-         * 
-         * As such they must be preceded by an Initialise Update and an External authenticate.
-         */
-        case	CLA_INS_PUT_DATA:
-        	putData(apdu) ;
-        	break ;
-        case	CLA_INS_UNBLOCK_PIN:
-        	unblockPin(apdu) ;
-        	break ;
+            // The global platform commands will be handled by the associated security domain.
+            case    CLA_INS_INITIALISE_UPDATE:
+            case    CLA_INS_EXTERNAL_AUTH:
+                dataToSend = mySecureChannel.processSecurity(apdu);
+                break ;
 
-        /*
-         * The remaining commands will be issued by the MCU after selecting the applet.
-         */
-        case	CLA_INS_GET_DATA:
-        	dataToSend = getData(apdu) ;
-        	break ;
-        case	CLA_INS_VERIFY_PIN:
-        	verifyPin(apdu) ;
-        	break ;
-        case	CLA_INS_CHANGE_PIN:
-        	changePin(apdu) ;
-        	break ;
-        case	CLA_INS_CREATE_CARD:
-        	createCard(apdu) ;
-        	break ;
-        case	CLA_INS_UPDATE_CARD:
-        	updateCard(apdu) ;
-        	break ;
-        case	CLA_INS_DELETE_CARD:
-            cardStore.deleteCard(apdu.getBuffer()) ;
-        	break ;
-        case	CLA_INS_GET_CARD:
-        	dataToSend = getCard(apdu) ;
-        	break ;
-        case	CLA_INS_VALIDATE:
-        	dataToSend = validate(apdu) ;
-        	break ;
-        case	CLA_INS_PAIR:
-        	pair(apdu) ;
-        	break ;
+            /*
+             * The PUT DATA and UNBLOCK PIN must be sent in a secured script from either
+             * the perso tool or an OTA script.
+             *
+             * As such they must be preceded by an Initialise Update and an External authenticate.
+             */
+            case    CLA_INS_PUT_DATA:
+                putData(apdu) ;
+                break ;
+            case    CLA_INS_UNBLOCK_PIN:
+            	unblockPin(apdu) ;
+                break ;
 
-        // If the cla ins combination was not recognised the report an error.
-        default:
-            ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
+            /*
+             * The remaining commands will be issued by the MCU after selecting the applet.
+             */
+            case    CLA_INS_GET_DATA:
+                dataToSend = getData(apdu) ;
+                break ;
+            case    CLA_INS_VERIFY_PIN:
+                verifyPin(apdu) ;
+                break ;
+            case    CLA_INS_CHANGE_PIN:
+                changePin(apdu) ;
+                break ;
+            case    CLA_INS_CREATE_CARD:
+                createCard(apdu) ;
+                break ;
+            case    CLA_INS_UPDATE_CARD:
+                updateCard(apdu) ;
+                break ;
+            case    CLA_INS_DELETE_CARD:
+                cardStore.deleteCard(apdu.getBuffer()) ;
+                break ;
+            case    CLA_INS_GET_CARD:
+                dataToSend = getCard(apdu) ;
+                break ;
+            case    CLA_INS_VALIDATE:
+                dataToSend = validate(apdu) ;
+                break ;
+            case    CLA_INS_PAIR:
+                pair(apdu) ;
+                break ;
+
+            // If the cla ins combination was not recognised the report an error.
+            default:
+                ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
 
         }
 
         if (dataToSend > (short)0)
             apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, dataToSend);
-	}
+    }
 
-	/**
-	 * This handles the PU DATA APDU issued as part of the personalisation script.
-	 * <p>
-	 * <b>Note:</> That this can only be issued over a secure channel.
-	 * 
-	 * @param apdu a reference to the APDU.
-	 */
-	private void putData(APDU apdu) {
-		
+    /**
+     * This handles the PU DATA APDU issued as part of the personalisation script.
+     * <p>
+     * <b>Note:</> That this can only be issued over a secure channel.
+     *
+     * @param apdu a reference to the APDU.
+     */
+    private void putData(APDU apdu) {
+
         byte[] apduBuffer = apdu.getBuffer();
 
         // Extract the tag of the data item to be personalised - mask off the last put bit.
@@ -320,78 +343,77 @@ public class JacketApplet extends Applet {
         if (GPSystem.getCardContentState() != GPSystem.APPLICATION_SELECTABLE)
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
 
+        length = (short)((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
+
         switch (tag)
         {
-	        case TAG_SLEEVE_HASH:
-	        	sleeveHash = new byte[length] ;
-	        	Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, sleeveHash, (short)0, length) ;
+            case TAG_SLEEVE_HASH:
+                sleeveHash = new byte[length] ;
+                Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, sleeveHash, (short)0, length) ;
                 break;
-                
-	        case TAG_CARD_HASH:
-	        	cardHash = new byte[length] ;
-	        	Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, cardHash, (short)0, length) ;
+
+            case TAG_CARD_HASH:
+                cardHash = new byte[length] ;
+                Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, cardHash, (short)0, length) ;
                 break;
-                
-	        case TAG_AES_MKEY:
-	        	aesMkey = new byte[length] ;
-	        	Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, aesMkey, (short)0, length) ;
+
+            case TAG_AES_MKEY:
+                aesMkey = new byte[length] ;
+                Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, aesMkey, (short)0, length) ;
                 break;
-                
-	        case TAG_PIN:
-	        	sleevePin.update(apduBuffer, ISO7816.OFFSET_CDATA, (byte) length) ;
+
+            case TAG_PIN:
+                sleevePin.update(apduBuffer, ISO7816.OFFSET_CDATA, (byte) length) ;
                 break;
-                
+
             case TAG_RSA_Q_1_MOD_P: // q-1 mod p
                 sleeveRSAPrivateCrtKey.setPQ(apduBuffer,  ISO7816.OFFSET_CDATA, length);
                 break;
 
             case TAG_RSA_D_MOD_Q_1: // d mod (q - 1)
-            	sleeveRSAPrivateCrtKey.setDQ1(apduBuffer, ISO7816.OFFSET_CDATA, length);
+                sleeveRSAPrivateCrtKey.setDQ1(apduBuffer, ISO7816.OFFSET_CDATA, length);
                 break;
 
             case TAG_RSA_D_MOD_P_1: // d mod (p - 1)
-            	sleeveRSAPrivateCrtKey.setDP1(apduBuffer, ISO7816.OFFSET_CDATA, length);
+                sleeveRSAPrivateCrtKey.setDP1(apduBuffer, ISO7816.OFFSET_CDATA, length);
                 break;
 
             case TAG_RSA_PRIME_Q: // prime factor q
-            	sleeveRSAPrivateCrtKey.setQ(apduBuffer,   ISO7816.OFFSET_CDATA, length);
+                sleeveRSAPrivateCrtKey.setQ(apduBuffer,   ISO7816.OFFSET_CDATA, length);
                 break;
 
             case TAG_RSA_PRIME_P: // prime factor p
-            	sleeveRSAPrivateCrtKey.setP(apduBuffer,   ISO7816.OFFSET_CDATA, length);
+                sleeveRSAPrivateCrtKey.setP(apduBuffer,   ISO7816.OFFSET_CDATA, length);
                break;
 
             case TAG_RSA_PUB_EXP:
-	        	pubKeyExp = new byte[length] ;
-	        	Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, pubKeyExp, (short)0, length) ;
+                pubKeyExp = new byte[length] ;
+                Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, pubKeyExp, (short)0, length) ;
                 break;
-                
-	        case TAG_RSA_PUB_MOD:
-	        	pubKeyMod = new byte[length] ;
-	        	Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, pubKeyMod, (short)0, length) ;
+
+            case TAG_RSA_PUB_MOD:
+                pubKeyMod = new byte[length] ;
+                Util.arrayCopyNonAtomic(apduBuffer, ISO7816.OFFSET_CDATA, pubKeyMod, (short)0, length) ;
                 break;
 
             // If the tag is not found reply with an invalid status.
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
-        
+
         // Mark the field as personalised.
         persoFlags |= tag ;
-        
+
         // If this is the last put data of personalisation, verify that all fields have been personalised.
-        if (p1 != 0) {
-    		if ((persoFlags & ALL_FIELDS_PERSOED) != ALL_FIELDS_PERSOED) 
-    			ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
-        	
-            // Initialise the RSA cipher.
-            rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
+        if ((p1 & 0x80) != 0) {
+            if ((persoFlags & ALL_FIELDS_PERSOED) != ALL_FIELDS_PERSOED)
+                ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
 
             GPSystem.setCardContentState(APPLET_PERSONALIZED);
         }
-	}
+    }
 
-	private void unblockPin(APDU apdu) {
+    private void unblockPin(APDU apdu) {
 
         byte[] apduBuffer = apdu.getBuffer();
 
@@ -402,54 +424,58 @@ public class JacketApplet extends Applet {
         if (GPSystem.getCardContentState() == GPSystem.APPLICATION_SELECTABLE)
             ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
 
-    	length = (short) ((short)apduBuffer[ISO7816.OFFSET_CDATA] & 0xFF) ;
-    	sleevePin.update(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 1), (byte)length);
-    	sleevePin.resetAndUnblock();
-	}
+        length = (short) ((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
+        sleevePin.update(apduBuffer, (short)ISO7816.OFFSET_CDATA, (byte)length);
+        sleevePin.resetAndUnblock();
+    }
 
-	private short getData(APDU apdu) {
+    private short getData(APDU apdu) {
         byte[] apduBuffer = apdu.getBuffer();
 
         // Extract the tag of the data item to be personalised.
         short tag    = (short) (Util.getShort(apduBuffer, ISO7816.OFFSET_P1) & 0x7FFF);
 
         // Only allow when in INSTAALLED state - not allowed after perso complete.
-        // Only allow when in INSTAALLED state - not allowed after perso complete.
         if (tag != TAG_VERSION) {
-        	
-        	if (GPSystem.getCardContentState() != APPLET_PERSONALIZED)
-        		ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
+
+            if (GPSystem.getCardContentState() != APPLET_PERSONALIZED)
+                ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
         }
 
-    	short dataToSend = Util.setShort(apduBuffer, (short)0, tag) ;
+        short dataToSend = Util.setShort(apduBuffer, ISO7816.OFFSET_CDATA, tag) ;
         switch (tag)
         {
-	        case TAG_VERSION:
-	            apduBuffer[dataToSend++] = (byte)VERSION.length ;
-	        	dataToSend  = Util.arrayCopyNonAtomic(VERSION, (short)0, apduBuffer, dataToSend, (short)VERSION.length);
+            case TAG_VERSION:
+                apduBuffer[dataToSend++] = (byte)VERSION.length ;
+                dataToSend  = Util.arrayCopyNonAtomic(VERSION, (short)0, apduBuffer, dataToSend, (short)VERSION.length);
                 break;
-                
-	        case TAG_RSA_PUB_EXP:
-	            apduBuffer[dataToSend++] = (byte)pubKeyExp.length ;
-	        	dataToSend  = Util.arrayCopyNonAtomic(pubKeyExp, (short)0, apduBuffer, dataToSend, (short)pubKeyExp.length);
+
+            case TAG_RSA_PUB_EXP:
+                apduBuffer[dataToSend++] = (byte)pubKeyExp.length ;
+                dataToSend  = Util.arrayCopyNonAtomic(pubKeyExp, (short)0, apduBuffer, dataToSend, (short)pubKeyExp.length);
                 break;
-                
-	        case TAG_RSA_PUB_MOD:
-	            apduBuffer[dataToSend++] = (byte)pubKeyMod.length ;
-	        	dataToSend  = Util.arrayCopyNonAtomic(pubKeyMod, (short)0, apduBuffer, dataToSend, (short)pubKeyMod.length);
+
+            case TAG_RSA_PUB_MOD:
+                apduBuffer[dataToSend++] = (byte)pubKeyMod.length ;
+                dataToSend  = Util.arrayCopyNonAtomic(pubKeyMod, (short)0, apduBuffer, dataToSend, (short)pubKeyMod.length);
                 break;
-                
+
             // If the tag is not found reply with an invalid status.
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
-		return dataToSend ;
-	}
+        return dataToSend ;
+    }
 
-	private void verifyPin(APDU apdu) {
-		
-		// Retrieve a reference to the APDU buffer.
+    private void verifyPin(APDU apdu) {
+
+        // Retrieve a reference to the APDU buffer.
         byte[] apduBuffer = apdu.getBuffer();
+
+        // Check the p1 and p2 parameters are correct.
+        short p1_p2 = Util.getShort(apduBuffer, ISO7816.OFFSET_P1) ;
+        if (p1_p2 != (byte)0)
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
 
         // If there are no retries available - throw an error.
         if (sleevePin.getTriesRemaining() == (byte)0)
@@ -457,12 +483,15 @@ public class JacketApplet extends Applet {
 
         // Determine the length of the command data.
         short length = (short) ((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
-        
+
+        // If there are no retries available - throw an error.
+        if (length != RSA_KEY_LENGTH)
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+
         // Decrypt using the sleeve private key.
         rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
-        rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, length);
+        rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
 
-        
         short offset = ISO7816.OFFSET_CDATA ;
 
         // Get the length of the handset fingerprint.
@@ -471,38 +500,43 @@ public class JacketApplet extends Applet {
         // If the fingerprint has not been saved yet - save it.
         if (null == handsetFingerprint)
         {
-        	handsetFingerprint = new byte[length] ;
-        	Util.arrayCopyNonAtomic(apduBuffer, offset, handsetFingerprint, (short)0, length) ;
+            handsetFingerprint = new byte[length] ;
+            Util.arrayCopyNonAtomic(apduBuffer, offset, handsetFingerprint, (short)0, length) ;
         }
         else
         {
-        	if (length != (short)handsetFingerprint.length)
+            if (length != (short)handsetFingerprint.length)
                 ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
 
-        	if (Util.arrayCopyNonAtomic(apduBuffer, offset, handsetFingerprint, (short)0, length) != 0)
+            if (Util.arrayCompare(apduBuffer, offset, handsetFingerprint, (short)0, length) != 0)
                 ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
         }
-        
+
         // Move on to the PIN.
         offset += length ;
-        
+
         // Compare the received PIN with the reference one.
         length = (short) ((short)apduBuffer[offset++] & 0xFF) ;
+
         if (!sleevePin.check(apduBuffer, offset, (byte)length))
         {
-        	// Set the return status to indicate the number of retries.
+            // Set the return status to indicate the number of retries.
             byte retries = sleevePin.getTriesRemaining();
 
             ISOException.throwIt((short)(0x63C0 + retries));
         }
         else
-        	transientStatus[PAIRING_STATUS] = true ;
+            transientStatus[PAIRING_STATUS] = true ;
+    }
 
-	}
-	
-	private void changePin(APDU apdu) {
-		// Retrieve a reference to the APDU buffer.
+    private void changePin(APDU apdu) {
+        // Retrieve a reference to the APDU buffer.
         byte[] apduBuffer = apdu.getBuffer();
+
+        // Check the p1 and p2 parameters are correct.
+        short p1_p2 = Util.getShort(apduBuffer, ISO7816.OFFSET_P1) ;
+        if (p1_p2 != (byte)0)
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
 
         // If there are no retries available - throw an error.
         if (sleevePin.getTriesRemaining() == (byte)0)
@@ -510,27 +544,44 @@ public class JacketApplet extends Applet {
 
         // Determine the length of the command data.
         short length = (short) ((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
-        
+
+        // Check the length is okay.
+        if (length != RSA_KEY_LENGTH)
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+
         // Decrypt using the sleeve private key.
         rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
         rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
 
-        // Compare the handset fingerprint with the paired one.
         short offset = ISO7816.OFFSET_CDATA ;
+
+        // Get the length of the handset fingerprint.
         length = (short) ((short)apduBuffer[offset++] & 0xFF) ;
-        
-    	if (length != (short)handsetFingerprint.length)
-            ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
 
-    	if (Util.arrayCopyNonAtomic(apduBuffer, offset, handsetFingerprint, (short)0, length) != 0)
-            ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
-
-        // Move on to the existing PIN.
-        offset += length ;
-        
-        if (!sleevePin.check(apduBuffer, offset, (byte) length))
+        // If the fingerprint has not been saved yet - save it.
+        if (null == handsetFingerprint)
         {
-        	// Set the return status to indicate the number of retries.
+            handsetFingerprint = new byte[length] ;
+            Util.arrayCopyNonAtomic(apduBuffer, offset, handsetFingerprint, (short)0, length) ;
+        }
+        else
+        {
+            if (length != (short)handsetFingerprint.length)
+                ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
+
+            if (Util.arrayCompare(apduBuffer, offset, handsetFingerprint, (short)0, length) != 0)
+                ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
+        }
+
+        // Move on to the PIN.
+        offset += length ;
+
+        // Compare the received PIN with the reference one.
+        length = (short) ((short)apduBuffer[offset++] & 0xFF) ;
+
+        if (!sleevePin.check(apduBuffer, offset, (byte)length))
+        {
+            // Set the return status to indicate the number of retries.
             byte retries = sleevePin.getTriesRemaining();
 
             ISOException.throwIt((short)(0x63C0 + retries));
@@ -541,83 +592,95 @@ public class JacketApplet extends Applet {
             offset += length ;
 
             length = (short) ((short)apduBuffer[offset++] & 0xFF) ;
-        	sleevePin.update(apduBuffer, offset, (byte)length);
-        	sleevePin.resetAndUnblock();
+            sleevePin.update(apduBuffer, offset, (byte)length);
+            sleevePin.resetAndUnblock();
         }
-	}
-	
-	private void createCard(APDU apdu) {
-		boolean encrypted = false ;
-		
-		// Retrieve a reference to the APDU buffer.
+
+    }
+
+    private void createCard(APDU apdu) {
+        boolean encrypted = false ;
+
+        // Retrieve a reference to the APDU buffer.
         byte[] apduBuffer = apdu.getBuffer();
 
         // Determine the length of the command data.
         short length = (short) ((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
-        
+
         // If the packet contains sensitive information - decrypt is using the private key.
         if (apduBuffer[ISO7816.OFFSET_P2] == 1) {
-        	encrypted = true ;
-        	
-		    // Decrypt using the sleeve private key.
-		    rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
-		    rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
+            encrypted = true ;
+
+            // If there are no retries available - throw an error.
+            if (length != RSA_KEY_LENGTH)
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+
+            // Decrypt using the sleeve private key.
+            rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
+            rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
         }
 
         cardStore.createCard(apduBuffer, encrypted) ;
-        
-	}
-	
-	private void updateCard(APDU apdu) {
-		boolean encrypted = false ;
 
-		// Retrieve a reference to the APDU buffer.
+    }
+
+    private void updateCard(APDU apdu) {
+        boolean encrypted = false ;
+
+        // Retrieve a reference to the APDU buffer.
         byte[] apduBuffer = apdu.getBuffer();
 
         // Determine the length of the command data.
         short length = (short) ((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
-        
+
         // If the packet contains sensitive information - decrypt is using the private key.
         if (apduBuffer[ISO7816.OFFSET_P2] == 1) {
-        	encrypted = true ;
+            encrypted = true ;
 
-        	// Decrypt using the sleeve private key.
-		    rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
-		    rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
+            // If there are no retries available - throw an error.
+            if (length != RSA_KEY_LENGTH)
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+
+            // Decrypt using the sleeve private key.
+            rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
+            rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
         }
 
         cardStore.updateCard(apduBuffer, encrypted) ;
-        
-	}
-	
-	private short getCard(APDU apdu) {
-		boolean encrypted = false ;
-		
-		// Retrieve a reference to the APDU buffer.
+
+    }
+
+    private short getCard(APDU apdu) {
+        boolean encrypted = false ;
+
+        // Retrieve a reference to the APDU buffer.
         byte[] apduBuffer = apdu.getBuffer();
 
         short p1 = (short) ((short)apduBuffer[ISO7816.OFFSET_P1] & 0xFF) ;
 
         // Determine the length of the command data.
         short length = (short) ((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
-        
+
         // If the packet contains sensitive information - decrypt is using the private key.
         if (apduBuffer[ISO7816.OFFSET_P2] == 1) {
-        	encrypted = true ;
-        	apduBuffer = apdu.getBuffer();
-        	
-		    // Decrypt using the sleeve private key.
-		    rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
-		    rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
+            encrypted = true ;
+
+            // If there are no retries available - throw an error.
+            if (length != RSA_KEY_LENGTH)
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+
+            // Decrypt using the sleeve private key.
+            rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
+            rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
 
             // Compare the handset fingerprint with the paired one.
-		    short offset = (short)(ISO7816.OFFSET_CDATA + 3) ;
+            short offset = (short)(ISO7816.OFFSET_CDATA + 3) ;
             length = (short) ((short)apduBuffer[offset++] & 0xFF) ;
-            
-        	if (length != (short)handsetFingerprint.length)
+
+            if (length != (short)handsetFingerprint.length)
                 ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
 
-        	if (Util.arrayCopyNonAtomic(apduBuffer, offset, handsetFingerprint, (short)0, length) != 0)
+            if (Util.arrayCompare(apduBuffer, offset, handsetFingerprint, (short)0, length) != 0)
                 ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
 
             // Move on to the PIN.
@@ -629,142 +692,194 @@ public class JacketApplet extends Applet {
             // Compare the PIN with the reference one.
             if (!sleevePin.check(apduBuffer, offset, (byte) length))
             {
-            	// Set the return status to indicate the number of retries.
+                // Set the return status to indicate the number of retries.
                 byte retries = sleevePin.getTriesRemaining();
 
                 ISOException.throwIt((short)(0x63C0 + retries));
             }
+            offset += length ;
+
+            // Set up the key for the return data.
+            validationAesKey.setKey(apduBuffer, offset);
         }
         else
         {
-        	// If the data is not encrypted the if P1 indicates that it is the sensitive data throw an error.
-        	if (p1 == 3) 
+            // If the data is not encrypted the if P1 indicates that it is the sensitive data throw an error.
+            if (p1 == 3)
                 ISOException.throwIt(ISO7816.SW_FILE_INVALID);
         }
 
-        // Handle the gget card.
+        // Handle the get card.
         length = cardStore.getCard(apduBuffer) ;
 
         // If encrypted - do it.
         if (encrypted) {
-        	// Encrypt using the session key.
-	        validationCipher.init(validationAesKey, Cipher.MODE_ENCRYPT);
-	        length = validationCipher.doFinal(apduBuffer, (short)0, length, apduBuffer, (short)0);
+            // Pad the data with 0's
+            while ((length & 0xF) != 0)
+                apduBuffer[(short)(ISO7816.OFFSET_CDATA + length++)] = 0 ;
+
+            // Encrypt using the session key.
+            validationCipher.init(validationAesKey, Cipher.MODE_ENCRYPT);
+            length = validationCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
         }
 
         return length ;
-	}
-	
-	private short validate(APDU apdu) {
-		// Retrieve a reference to the APDU buffer.
+    }
+
+    private short validate(APDU apdu) {
+        // Retrieve a reference to the APDU buffer.
         byte[] apduBuffer = apdu.getBuffer();
 
         if ((apduBuffer[ISO7816.OFFSET_P2] < 0) || (apduBuffer[ISO7816.OFFSET_P2] > 2))
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
-        
+
         short p1     = (short) ((short)apduBuffer[ISO7816.OFFSET_P1] & 0xFF) ;
         short length = (short) ((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
-        
+
         if (length < 2)
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
-        
+
         // Extract the random and build the session key.
         setSessionKey(Util.getShort(apduBuffer, ISO7816.OFFSET_CDATA)) ;
 
-        // If there is a hash included in the command data - decrypt it. 
+        // Adjust the length to account for the random.
+        length -= 2 ;
+
+        // If there is a hash included in the command data - decrypt and verify them.
         if (p1 != 0) {
-	    	// Encrypt using the session key.
-	        validationCipher.init(validationAesKey, Cipher.MODE_DECRYPT);
-	        validationCipher.doFinal(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 2), length, apduBuffer, (short)(ISO7816.OFFSET_CDATA + 2));
+            // Encrypt using the session key.
+            validationCipher.init(validationAesKey, Cipher.MODE_DECRYPT);
+            validationCipher.doFinal(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 2), length, apduBuffer, (short)(ISO7816.OFFSET_CDATA + 2));
+
+            // Verify that the card hash matches.
+            if (Util.arrayCompare(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 2),                   cardHash,   (short)0, (short)cardHash.length) != 0)
+                ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+
+            // Verify that the jacket hash matches.
+            if (Util.arrayCompare(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 2 + cardHash.length), sleeveHash, (short)0, (short)sleeveHash.length) != 0)
+                ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
         }
 
-        length = 0 ;
-        switch (apduBuffer[ISO7816.OFFSET_P1]) {
-	        case 0:
-	        	length = Util.arrayCopyNonAtomic(sleeveHash, (short)0, apduBuffer, (short)0, (short)sleeveHash.length) ;
-	        	break ;
-	
-	        case 1:
-	        	if (Util.arrayCompare(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 2), sleeveHash, (short)0, (short)sleeveHash.length) != 0)
-	                ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
-	        	length = Util.arrayCopyNonAtomic(cardHash, (short)0, apduBuffer, (short)0, (short)cardHash.length) ;
-	        	break ;
-	
-	        case 2:
-	        	if (Util.arrayCompare(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 2), cardHash, (short)0, (short)cardHash.length) != 0)
-	                ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
-	        	transientStatus[CARD_AUTH_STATUS] = true ;
-	        	break ;
-	        	
-        	default:
-                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        short rspLength = ISO7816.OFFSET_CDATA ;
+        if (p1 != 2) {
+            // respond with the card and sleev hash.
+            rspLength = Util.arrayCopyNonAtomic(cardHash,   (short)0, apduBuffer,         ISO7816.OFFSET_CDATA,                    (short)cardHash.length) ;
+            rspLength = Util.arrayCopyNonAtomic(sleeveHash, (short)0, apduBuffer, (short)(ISO7816.OFFSET_CDATA + cardHash.length), (short)cardHash.length) ;
         }
+        else
+            transientStatus[CARD_AUTH_STATUS] = true ;
+
+        rspLength -= ISO7816.OFFSET_CDATA ;
 
         // If there is data to return - pad and encrypt it.
-        if (length > 0)
+        if (rspLength > 0)
         {
-        	// Pad the data with 0's
-	    	while ((length & 0xF) != 0)
-	    		apduBuffer[length++] = 0 ;
-	    	
-	    	// Encrypt using the session key.
-	        validationCipher.init(validationAesKey, Cipher.MODE_ENCRYPT);
-	        validationCipher.doFinal(apduBuffer, (short)0, length, apduBuffer, (short)0);
-        }        
-		return length ;
-	}
+            // Encrypt using the session key.
+            validationCipher.init(validationAesKey, Cipher.MODE_ENCRYPT);
+            validationCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, (short)rspLength, apduBuffer, ISO7816.OFFSET_CDATA);
+        }
+        return rspLength ;
+    }
 
-	private void pair(APDU apdu) {
-		
-		// Retrieve a reference to the APDU buffer.
+    private void pair(APDU apdu) {
+
+        // Retrieve a reference to the APDU buffer.
         byte[] apduBuffer = apdu.getBuffer();
 
         // Determine the length of the command data.
         short length = (short) ((short)apduBuffer[ISO7816.OFFSET_LC] & 0xFF) ;
-        
+
+        // If there are no retries available - throw an error.
+        if (length != RSA_KEY_LENGTH)
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+
         // Decrypt using the sleeve private key.
         rsaCipher.init(sleeveRSAPrivateCrtKey, Cipher.MODE_DECRYPT);
         rsaCipher.doFinal(apduBuffer, ISO7816.OFFSET_CDATA, length, apduBuffer, ISO7816.OFFSET_CDATA);
 
         length = (short) ((short)apduBuffer[ISO7816.OFFSET_CDATA] & 0xFF) ;
-        
+
         // If the fingerprint has not been saved yet - save it.
         if (null == handsetFingerprint)
         {
-        	handsetFingerprint = new byte[length] ;
-        	Util.arrayCopyNonAtomic(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 1), handsetFingerprint, (short)0, length) ;
+            handsetFingerprint = new byte[length] ;
+            Util.arrayCopyNonAtomic(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 1), handsetFingerprint, (short)0, length) ;
         }
         else
         {
-        	if (length != (short)handsetFingerprint.length)
+            if (length != (short)handsetFingerprint.length)
                 ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
 
-        	if (Util.arrayCopyNonAtomic(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 1), handsetFingerprint, (short)0, length) != 0)
+            if (Util.arrayCompare(apduBuffer, (short)(ISO7816.OFFSET_CDATA + 1), handsetFingerprint, (short)0, length) != 0)
                 ISOException.throwIt(ISO7816.SW_COMMAND_NOT_ALLOWED);
         }
-        
-        // Set the pairing state to true.
-    	transientStatus[PAIRING_STATUS] = true ;
-	}
-	
-	private void setSessionKey(short rnd) {
-	
-		// Initialise the key derivation data to all 0.
-		Util.arrayFillNonAtomic(tmpBuffer, (short)0, (short) aesMkey.length, (byte)0) ;
-	
-		// Write the RND at the start of the buffer.
-		Util.setShort(tmpBuffer, (short)0, rnd) ;
-		
-		// Write the RND at the start of the buffer.
-		Util.setShort(tmpBuffer, (short)(aesMkey.length >> 1), (short)~rnd) ;
-		
-		// Encrypt using the master key.
-        validationAesKey.setKey(tmpBuffer, (short)0);
-        validationCipher.init(validationAesKey, Cipher.MODE_ENCRYPT);
-        validationCipher.doFinal(tmpBuffer, (short)0, (short)aesMkey.length, tmpBuffer, (short)0);
 
-		// Use the resulting encrypted data as the session key.
-        validationAesKey.setKey(tmpBuffer, (short)0);
-	}
+        // Set the pairing state to true.
+        transientStatus[PAIRING_STATUS] = true ;
+    }
+
+    private void setSessionKey(short rnd) {
+
+        // Initialise the key derivation data to all 0.
+        Util.arrayFillNonAtomic(tmpBuffer, (short)0, (short) aesMkey.length, (byte)0) ;
+
+        // Write the RND at the start of the buffer.
+        Util.setShort(tmpBuffer, (short)0, rnd) ;
+
+        // Write the RND at the start of the buffer.
+        Util.setShort(tmpBuffer, (short)(aesMkey.length >> 1), (short)~rnd) ;
+
+        // Encrypt using the master key.
+        validationAesKey.setKey(aesMkey, (short)0);
+        validationCipher.init(validationAesKey, Cipher.MODE_ENCRYPT);
+        validationCipher.doFinal(tmpBuffer, (short)0, (short)aesMkey.length, tmpBuffer, (short)aesMkey.length);
+
+        // Use the resulting encrypted data as the session key.
+        validationAesKey.setKey(tmpBuffer, (short)aesMkey.length);
+    }
+
+    /**
+     * Set the return type based on the exception.
+     */
+    public short returException(Exception e)
+    {
+        short reason = 0;
+        short errorType = 0;
+        if (e instanceof CryptoException) {
+            errorType = 1;
+            reason = ((ISOException) e).getReason();
+        } else if (e instanceof ISOException) {
+            errorType = 2;
+            reason = ((ISOException) e).getReason();
+        } else if (e instanceof SystemException) {
+            errorType = 3;
+            reason = ((SystemException) e).getReason();
+        } else if (e instanceof ArithmeticException) {
+            errorType = 4;
+        } else if (e instanceof ArrayStoreException) {
+            errorType = 5;
+        } else if (e instanceof ClassCastException) {
+            errorType = 6;
+        } else if (e instanceof IndexOutOfBoundsException) {
+            errorType = 7;
+        } else if (e instanceof NegativeArraySizeException) {
+            errorType = 8;
+        } else if (e instanceof NullPointerException) {
+            errorType = 9;
+        } else if (e instanceof SecurityException) {
+            errorType = 10;
+        } else if (e instanceof CardRuntimeException) {
+            reason = ((CardRuntimeException) e).getReason();
+            errorType = 11;
+        } else {
+            errorType = 12;
+        }
+
+        short error = (short)(0x7000 + (short)(errorType << 8) + (short)(reason & 0xFF)) ;
+
+        if (0 == error)
+            error = 0x6432 ;
+        return error ;
+    }
 
 }

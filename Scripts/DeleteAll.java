@@ -1,25 +1,8 @@
-package com.radiius.card.scripts;
-
-import java.awt.Dimension;
-import java.awt.FlowLayout;
-import java.awt.GridBagConstraints;
-import java.awt.Insets;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.io.File;
-import java.io.IOException;
-
-import javax.swing.JButton;
-import javax.swing.JDialog;
-import javax.swing.JFileChooser;
-import javax.swing.JPanel;
-import javax.swing.filechooser.FileFilter;
-import javax.swing.filechooser.FileSystemView;
+package com.radiius;
 
 import com.helixion.globalplatform.GPConstants;
 import com.helixion.globalplatform.GPLoader;
 import com.helixion.globalplatform.GP_SCP;
-import com.helixion.gui.FormPanel;
 import com.helixion.lok.logger.LogLineType;
 import com.helixion.lok.lokSimTester.scriptutils.TestScriptConstants;
 import com.helixion.lok.scriptmanager.ScriptManager;
@@ -29,8 +12,6 @@ import com.helixion.lok.scripts.ScriptRunStates;
 import com.helixion.lok.scripts.ScriptTypes;
 import com.helixion.lok.testcomponent.carddetails.CardDetails;
 import com.helixion.lok.testcomponent.carddetails.CardDetailsTestComponent;
-import com.helixion.lok.testcomponent.carddetails.configvmpa.VMPADetails;
-import com.helixion.lok.utils.ByteArray;
 import com.helixion.smartcardio.cardreader.CardInterface;
 import com.helixion.smartcardio.cardreader.CardReaderTestComponent;
 
@@ -42,11 +23,9 @@ import com.helixion.smartcardio.cardreader.CardReaderTestComponent;
  *
  * @author Steve Harkins
  */
-public class GetVersionString extends JavaScript implements TestScriptConstants {
+public class DeleteAll extends JavaScript implements TestScriptConstants {
 
-	private static String INSTANCE_AID = "5241440000010011" ;
-
-    public GetVersionString(ScriptManager scriptmanager) {
+    public DeleteAll(ScriptManager scriptmanager) {
         super(scriptmanager);
     }
 
@@ -54,21 +33,21 @@ public class GetVersionString extends JavaScript implements TestScriptConstants 
      * @see com.helixion.lok.scripts.Script#getName()
      */
     public String getName() {
-        return "Get Version";
+        return "Delete all";
     }
 
     /* (non-Javadoc)
      * @see com.helixion.lok.scripts.Script#getPackage()
      */
     public String[] getPackageTree() {
-        return new String[] {"Radiius", "Card"} ;
+        return new String[] {"Radiius"} ;
     }
 
     /* (non-Javadoc)
      * @see com.helixion.lok.scripts.Script#getDescription()
      */
     public String getDescription() {
-        return "Retrieves the version string of the applet." ;
+        return "Deletes all Radiius file and applets." ;
     }
 
     /* (non-Javadoc)
@@ -79,12 +58,12 @@ public class GetVersionString extends JavaScript implements TestScriptConstants 
     }
 
     public void run() {
-        boolean isSuccess = false;
-        CardInterface isoReader = null;
-        setRunState(ScriptRunStates.RESULT);
+         boolean isSuccess = false;
+         CardInterface isoReader = null ;
+         GP_SCP sChannel = null ;
 
-        try
-        {
+        setRunState(ScriptRunStates.TESTSCRIPTS);
+        try {
             // Get the card reader type and establish connection to the ISO and SWP interfaces.
             CardReaderTestComponent cardType = (CardReaderTestComponent)getInstanceOfTestComponent("cardreader") ;
             if (null == cardType)
@@ -94,44 +73,53 @@ public class GetVersionString extends JavaScript implements TestScriptConstants 
             if (null == isoReader)
                 throw new Exception("Script error: no card detected.") ;
 
-            // Select the card applet.
-            byte [] response = isoReader.sendApdu(0x00, 0xA4, 0x04, 0x00, ByteArray.hexStrToBytes(INSTANCE_AID), 0) ; 
+            // Extract the card details.
+            // Get a reference to the SIM card.
+            CardDetailsTestComponent cardComponent  = (CardDetailsTestComponent)getInstanceOfTestComponent("carddetails.loksim");
+            CardDetails cardDetails = cardComponent.getCardDetails() ;
 
-            // Issue the put data commands to the applet.
-            response = isoReader.sendApdu(0x80, 0xCA, 0x40, 0x00, null, 0) ;
-            
-            int status = ByteArray.getShortBE(response, response.length - 2) ;
-            if (status == 0x9000)
-            	log(LogLineType.RESULT, "Version string: " + new String(response, 3, response.length - 5)) ;
-            else
-            	log(LogLineType.RESULT, "ERROR when reading version string: " + Integer.toHexString(status)) ;
+            // Create a new instance of the GP_SCP using the card details to extract the relevant information.
+            sChannel = new GP_SCP(cardDetails) ;
+
+            // Open a channel to the card manager.
+            sChannel.open(isoReader, cardDetails.getSID(), cardDetails.getDefaultKvn(), 0, GPConstants.SCP_ANY, cardDetails.getSecurityLevel());
+
+            // Create an instance of the GP loader.
+            GPLoader gpLoader = new GPLoader(sChannel, false);
+
+            gpLoader.deleteAID("524143000000", true) ;
+            gpLoader.deleteAID("524144000000", true) ;
+            gpLoader.deleteAID("524143000001", true) ;
+            gpLoader.deleteAID("524144000001", true) ;
 
             isSuccess = true;
-            
-        }
-        catch (Exception e)
-        {
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
             log(LogLineType.TRACE, "Error: " + e.toString());
         }
-        finally
-        {
+        finally {
+            // Close the secure channel.
+            if (null != sChannel)
+                sChannel.close();
+
             // Reset the card.
-            if (null != isoReader)
-            {
-                try
-                {
-                    isoReader.reset();
+            if (null != isoReader) {
+                try {
+                    isoReader.reset() ;
+                } catch (Exception e) {
                 }
-                catch (Exception e)
-                {
+
+                // Release the card.
+                try {
+                    isoReader.close() ;
+                } catch (Exception e) {
                 }
             }
         }
-
         setRunState(ScriptRunStates.RESULT);
 
         log(LogLineType.RESULT, isSuccess ? ScriptResults.PASS.toString()
-                                         : ScriptResults.FAILED.toString());
+                                          : ScriptResults.FAILED.toString());
     }
 
 }

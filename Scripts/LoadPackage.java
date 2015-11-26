@@ -188,8 +188,6 @@ public class LoadPackage extends JavaScript implements TestScriptConstants, Acti
         CardDetailsTestComponent cardComponent  = (CardDetailsTestComponent)getInstanceOfTestComponent("carddetails.loksim");
         CardDetails cardDetails = cardComponent.getCardDetails() ;
 
-        VMPADetails vmpaDetails = cardComponent.getVmpaDetails();
-
         // Create a new instance of the GP_SCP using the card details to extract the relevant information.
         GP_SCP sChannel = new GP_SCP(cardDetails) ;
 
@@ -201,10 +199,8 @@ public class LoadPackage extends JavaScript implements TestScriptConstants, Acti
             GPLoader gpLoader = new GPLoader(sChannel, false);
 
             // Load the package - will automatically delete the package if it's already there..
-            String packageAid = gpLoader.loadPackage(capFile, false);
+            gpLoader.loadPackage(capFile, false);
             
-            // Install parameters require for the G&D Scorpius.
-            String installParamaters = "C900" ;
         } finally {
             // Close the secure channel.
             if (null != sChannel)
@@ -240,7 +236,6 @@ public class LoadPackage extends JavaScript implements TestScriptConstants, Acti
         fileChooser.setFileFilter(new FileFilter() {
 
             public boolean accept(File pathname) {
-//                System.out.println("File ==> " + pathname.getName() + " ==> " + pathname.getName().endsWith(".cap") + " ==> " + ((pathname != null) && (pathname.isDirectory() || pathname.getName().endsWith(".cap"))));
                 return ((pathname != null) && (pathname.isDirectory() || pathname.getName().endsWith(".cap")));
             }
 
